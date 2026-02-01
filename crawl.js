@@ -137,48 +137,59 @@ export async function fetchPlaceInfo(mid) {
 // 네이버 플레이스 검색 순위 가져오기
 // ============================================
 export async function fetchPlaceRank(keyword, targetMid) {
-  // 네이버 지도 검색 API (비공식)
-  const searchUrl = `https://map.naver.com/p/api/search/allSearch`;
+  console.log(`[RANK] 순위 검색 시작: 키워드="${keyword}", MID=${targetMid}`);
   
   try {
+    // 네이버 지도 검색 API
+    const searchUrl = `https://map.naver.com/p/api/search/allSearch?query=${encodeURIComponent(keyword)}&type=all&searchCoord=126.9783882;37.5666103&boundary=`;
+    
     const agent = getRandomProxyAgent();
     const response = await axios.get(searchUrl, {
       httpsAgent: agent,
-      params: {
-        query: keyword,
-        type: 'all',
-        searchCoord: '126.9783882;37.5666103', // 서울 중심 좌표
-        boundary: '',
-      },
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'Accept-Language': 'ko-KR,ko;q=0.9',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
         'Referer': 'https://map.naver.com/',
+        'Origin': 'https://map.naver.com',
       },
       timeout: 15000,
     });
 
     const data = response.data;
-    
-    // 플레이스 검색 결과에서 순위 찾기
     let rank = null;
     let totalCount = 0;
 
-    if (data?.result?.place?.list) {
-      const places = data.result.place.list;
+    // 검색 결과에서 place 리스트 찾기
+    const placeResult = data?.result?.place;
+    if (placeResult && placeResult.list) {
+      const places = placeResult.list;
       totalCount = places.length;
-      
+      console.log(`[RANK] 검색 결과 ${totalCount}개 발견`);
+
       for (let i = 0; i < places.length; i++) {
         const place = places[i];
-        // MID(PID) 비교
-        if (place.id === targetMid || 
-            place.placeId === targetMid ||
-            String(place.id) === String(targetMid)) {
+        const placeId = String(place.id || place.placeId || '');
+        const targetId = String(targetMid);
+        
+        // ID 비교 (앞자리 일치도 체크)
+        if (placeId === targetId || placeId.includes(targetId) || targetId.includes(placeId)) {
           rank = i + 1;
+          console.log(`[RANK] 발견! 순위: ${rank}, placeId: ${placeId}`);
           break;
         }
       }
+
+      if (!rank) {
+        console.log(`[RANK] MID ${targetMid}를 검색 결과에서 찾지 못함`);
+        // 디버깅: 처음 5개 결과 로그
+        places.slice(0, 5).forEach((p, i) => {
+          console.log(`[RANK] ${i+1}위: id=${p.id}, name=${p.name}`);
+        });
+      }
+    } else {
+      console.log('[RANK] 검색 결과 없음 또는 다른 형식');
+      console.log('[RANK] 응답 키:', Object.keys(data?.result || {}));
     }
 
     return {
@@ -188,7 +199,7 @@ export async function fetchPlaceRank(keyword, targetMid) {
     };
 
   } catch (error) {
-    console.error(`[ERROR] 순위 검색 실패 (${keyword}):`, error.message);
+    console.error(`[RANK ERROR] 순위 검색 실패 (${keyword}):`, error.message);
     return {
       rank: null,
       totalResults: 0,
