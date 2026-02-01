@@ -7,13 +7,14 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "crawl": "node -e \"import('./crawl.js').then(m => m.crawlAllShops())\"",
+    "crawl": "node -e \"import('./crawl.js').then(m => m.crawlAllCampaigns())\"",
     "test": "node test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.2",
     "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "https-proxy-agent": "^7.0.2",

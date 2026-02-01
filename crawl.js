@@ -30,8 +30,8 @@ function getRandomProxyAgent() {
 // ============================================
 // 네이버 플레이스 정보 가져오기
 // ============================================
-export async function fetchPlaceInfo(placeId) {
-  const url = `https://pcmap.place.naver.com/place/${placeId}/home`;
+export async function fetchPlaceInfo(mid) {
+  const url = `https://map.naver.com/p/api/place/summary/${mid}`;
   
   try {
     const agent = getRandomProxyAgent();
@@ -39,58 +39,65 @@ export async function fetchPlaceInfo(placeId) {
       httpsAgent: agent,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
+        'Accept': 'application/json',
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+        'Referer': 'https://map.naver.com/',
       },
-      timeout: 15000,
+      timeout: 10000,
     });
 
-    const $ = cheerio.load(response.data);
-    
-    // JSON-LD 스크립트에서 정보 추출
-    let placeData = null;
-    $('script[type="application/ld+json"]').each((i, el) => {
-      try {
-        const json = JSON.parse($(el).html());
-        if (json['@type'] === 'LocalBusiness' || json.name) {
-          placeData = json;
-        }
-      } catch (e) {}
-    });
-
-    if (placeData) {
-      return {
-        name: placeData.name || '',
-        address: placeData.address?.streetAddress || '',
-        telephone: placeData.telephone || '',
-        image: placeData.image || '',
-        url: `https://map.naver.com/p/entry/place/${placeId}`,
-      };
-    }
-
-    // 대안: HTML에서 직접 추출
-    const name = $('span.GHAhO').first().text() || $('h2.place_name').text();
-    const address = $('span.LDgIH').first().text();
+    const data = response.data;
     
     return {
-      name: name || `Place ${placeId}`,
-      address: address || '',
-      telephone: '',
-      image: '',
-      url: `https://map.naver.com/p/entry/place/${placeId}`,
+      success: true,
+      mid: mid,
+      name: data.name || data.placeName || '',
+      thumbnail: data.imageUrl || data.thumUrl || data.image || '',
+      address: data.address || data.roadAddress || '',
+      category: data.category || '',
     };
 
   } catch (error) {
-    console.error(`[ERROR] 플레이스 정보 가져오기 실패 (${placeId}):`, error.message);
-    return null;
+    console.error(`[ERROR] 플레이스 정보 가져오기 실패 (${mid}):`, error.message);
+    
+    // 대안: HTML 페이지에서 파싱
+    try {
+      const htmlUrl = `https://m.place.naver.com/place/${mid}/home`;
+      const agent = getRandomProxyAgent();
+      const res = await axios.get(htmlUrl, {
+        httpsAgent: agent,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        },
+        timeout: 10000,
+      });
+      
+      const $ = cheerio.load(res.data);
+      const name = $('span.GHAhO').first().text() || $('h2.place_name').text() || '';
+      const thumbnail = $('img.place_thumb').attr('src') || $('meta[property="og:image"]').attr('content') || '';
+      
+      return {
+        success: true,
+        mid: mid,
+        name: name,
+        thumbnail: thumbnail,
+        address: '',
+        category: '',
+      };
+    } catch (e) {
+      return {
+        success: false,
+        mid: mid,
+        error: '플레이스 정보를 가져올 수 없습니다.',
+      };
+    }
   }
 }
 
 // ============================================
 // 네이버 플레이스 검색 순위 가져오기
 // ============================================
-export async function fetchPlaceRank(keyword, targetPlaceId) {
+export async function fetchPlaceRank(keyword, targetMid) {
   // 네이버 지도 검색 API (비공식)
   const searchUrl = `https://map.naver.com/p/api/search/allSearch`;
   
@@ -125,10 +132,10 @@ export async function fetchPlaceRank(keyword, targetPlaceId) {
       
       for (let i = 0; i < places.length; i++) {
         const place = places[i];
-        // ID 비교 (여러 필드 체크)
-        if (place.id === targetPlaceId || 
-            place.placeId === targetPlaceId ||
-            String(place.id) === String(targetPlaceId)) {
+        // MID(PID) 비교
+        if (place.id === targetMid || 
+            place.placeId === targetMid ||
+            String(place.id) === String(targetMid)) {
           rank = i + 1;
           break;
         }
@@ -153,33 +160,20 @@ export async function fetchPlaceRank(keyword, targetPlaceId) {
 }
 
 // ============================================
-// 단일 업체 크롤링
+// 단일 캠페인 순위 크롤링
 // ============================================
-export async function crawlSingleShop(shopId) {
-  console.log(`[CRAWL] 업체 크롤링 시작: ${shopId}`);
+export async function crawlSingleCampaign(campaign) {
+  console.log(`[CRAWL] 캠페인 크롤링: ${campaign.company} - ${campaign.keyword}`);
   
-  // DB에서 업체 정보 가져오기
-  const { data: shop, error } = await supabase
-    .from('place_shops')
-    .select('*')
-    .eq('id', shopId)
-    .single();
-
-  if (error || !shop) {
-    console.error(`[ERROR] 업체 조회 실패: ${shopId}`, error);
-    return { success: false, error: '업체를 찾을 수 없습니다.' };
-  }
-
   // 순위 조회
-  const rankResult = await fetchPlaceRank(shop.keyword, shop.place_id);
+  const rankResult = await fetchPlaceRank(campaign.keyword, campaign.mid);
   
   // 순위 히스토리 저장
   const { error: historyError } = await supabase
-    .from('place_rank_history')
+    .from('campaign_rank_history')
     .insert({
-      shop_id: shopId,
+      campaign_id: campaign.id,
       rank: rankResult.rank,
-      keyword: shop.keyword,
       checked_at: rankResult.checkedAt,
     });
 
@@ -187,98 +181,98 @@ export async function crawlSingleShop(shopId) {
     console.error(`[ERROR] 히스토리 저장 실패:`, historyError);
   }
 
-  // 업체 테이블의 current_rank, last_rank 업데이트
+  // campaigns 테이블의 current_rank, last_rank 업데이트
   const { error: updateError } = await supabase
-    .from('place_shops')
+    .from('campaigns')
     .update({
-      last_rank: shop.current_rank,
+      last_rank: campaign.current_rank,
       current_rank: rankResult.rank,
-      last_checked: rankResult.checkedAt,
+      last_rank_checked: rankResult.checkedAt,
     })
-    .eq('id', shopId);
+    .eq('id', campaign.id);
 
   if (updateError) {
-    console.error(`[ERROR] 업체 업데이트 실패:`, updateError);
+    console.error(`[ERROR] 캠페인 업데이트 실패:`, updateError);
   }
 
-  console.log(`[CRAWL] 완료: ${shop.shop_name} - 키워드: ${shop.keyword} - 순위: ${rankResult.rank || 'N/A'}`);
+  console.log(`[CRAWL] 완료: ${campaign.company} - ${campaign.keyword} - 순위: ${rankResult.rank || '순위외'}`);
 
   return {
     success: true,
-    shopId,
-    shopName: shop.shop_name,
-    keyword: shop.keyword,
+    campaignId: campaign.id,
+    company: campaign.company,
+    keyword: campaign.keyword,
     rank: rankResult.rank,
   };
 }
 
 // ============================================
-// 전체 업체 크롤링
+// 전체 진행중 캠페인 크롤링
 // ============================================
-export async function crawlAllShops() {
+export async function crawlAllCampaigns() {
   console.log('[CRAWL] ===== 전체 크롤링 시작 =====');
   const startTime = Date.now();
 
-  // 활성화된 모든 업체 가져오기
-  const { data: shops, error } = await supabase
-    .from('place_shops')
+  // 진행중인 place 캠페인만 가져오기
+  const { data: campaigns, error } = await supabase
+    .from('campaigns')
     .select('*')
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .eq('category', 'place');
 
   if (error) {
-    console.error('[ERROR] 업체 목록 조회 실패:', error);
+    console.error('[ERROR] 캠페인 목록 조회 실패:', error);
     return { success: false, error: error.message };
   }
 
-  console.log(`[CRAWL] 총 ${shops.length}개 업체 크롤링 예정`);
+  console.log(`[CRAWL] 총 ${campaigns.length}개 캠페인 크롤링 예정`);
 
   const results = {
-    total: shops.length,
+    total: campaigns.length,
     success: 0,
     failed: 0,
     details: [],
   };
 
   // 순차적으로 크롤링 (과도한 요청 방지)
-  for (let i = 0; i < shops.length; i++) {
-    const shop = shops[i];
+  for (let i = 0; i < campaigns.length; i++) {
+    const campaign = campaigns[i];
     
     try {
-      const result = await crawlSingleShop(shop.id);
+      const result = await crawlSingleCampaign(campaign);
       
       if (result.success) {
         results.success++;
         results.details.push({
-          shopName: shop.shop_name,
+          company: campaign.company,
           rank: result.rank,
           status: 'success',
         });
       } else {
         results.failed++;
         results.details.push({
-          shopName: shop.shop_name,
+          company: campaign.company,
           status: 'failed',
-          error: result.error,
         });
       }
     } catch (err) {
       results.failed++;
       results.details.push({
-        shopName: shop.shop_name,
+        company: campaign.company,
         status: 'error',
         error: err.message,
       });
     }
 
     // 요청 간격 (2~4초 랜덤)
-    if (i < shops.length - 1) {
+    if (i < campaigns.length - 1) {
       const delay = 2000 + Math.random() * 2000;
       await new Promise(resolve => setTimeout(resolve, delay));
     }
 
     // 진행 상황 로그 (10개마다)
     if ((i + 1) % 10 === 0) {
-      console.log(`[CRAWL] 진행: ${i + 1}/${shops.length}`);
+      console.log(`[CRAWL] 진행: ${i + 1}/${campaigns.length}`);
     }
   }
 
@@ -288,39 +282,4 @@ export async function crawlAllShops() {
   console.log(`[CRAWL] 소요 시간: ${elapsed}초`);
 
   return results;
-}
-
-// ============================================
-// 새 업체 등록 시 정보 자동 수집
-// ============================================
-export async function initializeShopInfo(shopId) {
-  const { data: shop, error } = await supabase
-    .from('place_shops')
-    .select('place_id')
-    .eq('id', shopId)
-    .single();
-
-  if (error || !shop) {
-    return { success: false, error: '업체를 찾을 수 없습니다.' };
-  }
-
-  const placeInfo = await fetchPlaceInfo(shop.place_id);
-  
-  if (placeInfo) {
-    await supabase
-      .from('place_shops')
-      .update({
-        shop_name: placeInfo.name,
-        address: placeInfo.address,
-        telephone: placeInfo.telephone,
-        thumbnail: placeInfo.image,
-        place_url: placeInfo.url,
-        status: 'active',
-      })
-      .eq('id', shopId);
-
-    return { success: true, info: placeInfo };
-  }
-
-  return { success: false, error: '플레이스 정보를 가져올 수 없습니다.' };
 }
