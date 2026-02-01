@@ -31,66 +31,105 @@ function getRandomProxyAgent() {
 // 네이버 플레이스 정보 가져오기
 // ============================================
 export async function fetchPlaceInfo(mid) {
-  const url = `https://map.naver.com/p/api/place/summary/${mid}`;
+  console.log(`[API] 플레이스 정보 조회 시작: ${mid}`);
   
   try {
+    // 방법 1: 네이버 플레이스 상세 페이지에서 JSON 데이터 추출
+    const url = `https://m.place.naver.com/place/${mid}/home`;
     const agent = getRandomProxyAgent();
+    
     const response = await axios.get(url, {
       httpsAgent: agent,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9',
-        'Referer': 'https://map.naver.com/',
       },
-      timeout: 10000,
+      timeout: 15000,
     });
 
-    const data = response.data;
+    const html = response.data;
     
-    return {
-      success: true,
-      mid: mid,
-      name: data.name || data.placeName || '',
-      thumbnail: data.imageUrl || data.thumUrl || data.image || '',
-      address: data.address || data.roadAddress || '',
-      category: data.category || '',
-    };
+    // window.__APOLLO_STATE__ 에서 데이터 추출
+    const apolloMatch = html.match(/window\.__APOLLO_STATE__\s*=\s*({.+?});?\s*<\/script>/s);
+    if (apolloMatch) {
+      try {
+        const apolloData = JSON.parse(apolloMatch[1]);
+        // PlaceDetailBase:mid 형태의 키 찾기
+        const placeKey = Object.keys(apolloData).find(k => k.startsWith('PlaceDetailBase:'));
+        if (placeKey && apolloData[placeKey]) {
+          const place = apolloData[placeKey];
+          console.log(`[API] Apollo 데이터 발견: ${place.name}`);
+          return {
+            success: true,
+            mid: mid,
+            name: place.name || '',
+            thumbnail: place.imageUrl || place.thumbnailUrl || '',
+            address: place.roadAddress || place.address || '',
+            category: place.category || '',
+          };
+        }
+      } catch (e) {
+        console.log('[API] Apollo 파싱 실패, 다른 방법 시도');
+      }
+    }
 
-  } catch (error) {
-    console.error(`[ERROR] 플레이스 정보 가져오기 실패 (${mid}):`, error.message);
+    // 방법 2: meta 태그에서 추출
+    const $ = cheerio.load(html);
+    const ogTitle = $('meta[property="og:title"]').attr('content') || '';
+    const ogImage = $('meta[property="og:image"]').attr('content') || '';
+    const ogDesc = $('meta[property="og:description"]').attr('content') || '';
     
-    // 대안: HTML 페이지에서 파싱
-    try {
-      const htmlUrl = `https://m.place.naver.com/place/${mid}/home`;
-      const agent = getRandomProxyAgent();
-      const res = await axios.get(htmlUrl, {
-        httpsAgent: agent,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-        },
-        timeout: 10000,
-      });
-      
-      const $ = cheerio.load(res.data);
-      const name = $('span.GHAhO').first().text() || $('h2.place_name').text() || '';
-      const thumbnail = $('img.place_thumb').attr('src') || $('meta[property="og:image"]').attr('content') || '';
-      
+    // 제목에서 업체명 추출 (보통 "업체명 : 네이버 플레이스" 형식)
+    let name = ogTitle.split(':')[0].split('-')[0].split('|')[0].trim();
+    
+    if (name) {
+      console.log(`[API] OG 태그에서 추출: ${name}`);
       return {
         success: true,
         mid: mid,
         name: name,
-        thumbnail: thumbnail,
+        thumbnail: ogImage,
         address: '',
         category: '',
       };
-    } catch (e) {
+    }
+
+    // 방법 3: HTML에서 직접 추출
+    const nameFromHtml = $('span.GHAhO').first().text() || 
+                         $('span.place_name').first().text() || 
+                         $('h1').first().text() || '';
+    
+    if (nameFromHtml) {
+      console.log(`[API] HTML에서 추출: ${nameFromHtml}`);
       return {
-        success: false,
+        success: true,
         mid: mid,
-        error: '플레이스 정보를 가져올 수 없습니다.',
+        name: nameFromHtml.trim(),
+        thumbnail: ogImage,
+        address: '',
+        category: '',
       };
     }
+
+    console.log('[API] 정보 추출 실패');
+    return {
+      success: false,
+      mid: mid,
+      name: '',
+      thumbnail: '',
+      error: '정보를 가져올 수 없습니다.',
+    };
+
+  } catch (error) {
+    console.error(`[ERROR] 플레이스 정보 가져오기 실패 (${mid}):`, error.message);
+    return {
+      success: false,
+      mid: mid,
+      name: '',
+      thumbnail: '',
+      error: error.message,
+    };
   }
 }
 
