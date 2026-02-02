@@ -134,81 +134,92 @@ export async function fetchPlaceInfo(mid) {
 }
 
 // ============================================
-// 네이버 플레이스 검색 순위 가져오기
+// 네이버 플레이스 검색 순위 가져오기 (HTML 파싱, CPC 광고 제외)
 // ============================================
 export async function fetchPlaceRank(keyword, targetMid) {
   console.log(`[RANK] 순위 검색 시작: 키워드="${keyword}", MID=${targetMid}`);
   
   try {
-    // 네이버 지도 검색 API
-    const searchUrl = `https://map.naver.com/p/api/search/allSearch?query=${encodeURIComponent(keyword)}&type=all&searchCoord=126.9783882;37.5666103&boundary=`;
+    // 네이버 지도 검색 페이지
+    const searchUrl = `https://map.naver.com/p/search/${encodeURIComponent(keyword)}`;
     
     const agent = getRandomProxyAgent();
     const response = await axios.get(searchUrl, {
       httpsAgent: agent,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://map.naver.com/',
-        'Origin': 'https://map.naver.com',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9',
       },
       timeout: 15000,
     });
 
-    const data = response.data;
+    const html = response.data;
     let rank = null;
     let totalCount = 0;
 
-    // 디버깅: result.place 구조 확인
-    if (data?.result?.place) {
-      const placeData = data.result.place;
-      console.log('[RANK] result.place 타입:', typeof placeData, Array.isArray(placeData) ? '(배열)' : '');
-      if (typeof placeData === 'object' && !Array.isArray(placeData)) {
-        console.log('[RANK] result.place 키:', Object.keys(placeData));
-      }
-    }
-
-    // 검색 결과에서 place 리스트 찾기 (여러 경로 시도)
-    let places = null;
-    if (data?.result?.place?.list) {
-      places = data.result.place.list;
-      console.log('[RANK] 경로: result.place.list');
-    } else if (Array.isArray(data?.result?.place)) {
-      places = data.result.place;
-      console.log('[RANK] 경로: result.place (array)');
-    } else if (data?.result?.place?.items) {
-      places = data.result.place.items;
-      console.log('[RANK] 경로: result.place.items');
-    } else if (data?.result?.place?.data) {
-      places = data.result.place.data;
-      console.log('[RANK] 경로: result.place.data');
-    }
-
-    if (places && places.length > 0) {
-      totalCount = places.length;
-      console.log(`[RANK] 검색 결과 ${totalCount}개 발견`);
-
-      for (let i = 0; i < places.length; i++) {
-        const place = places[i];
-        const placeId = String(place.id || place.placeId || place.sid || '');
-        const targetId = String(targetMid);
+    // __APOLLO_STATE__ 에서 검색 결과 추출
+    const apolloMatch = html.match(/__APOLLO_STATE__\s*=\s*({.+?});?\s*<\/script>/s);
+    
+    if (apolloMatch) {
+      try {
+        const apolloData = JSON.parse(apolloMatch[1]);
         
-        if (placeId === targetId) {
-          rank = i + 1;
-          console.log(`[RANK] 발견! 순위: ${rank}, placeId: ${placeId}, name: ${place.name}`);
-          break;
+        // 검색 결과 place 찾기 (SearchList, PlaceSummary 등)
+        const placeKeys = Object.keys(apolloData).filter(k => 
+          k.startsWith('PlaceSummary:') || k.startsWith('Place:')
+        );
+        
+        console.log(`[RANK] Apollo에서 ${placeKeys.length}개 장소 발견`);
+        
+        // 광고 제외하고 순서대로 정렬
+        const places = placeKeys
+          .map(k => apolloData[k])
+          .filter(p => !p.isAd && !p.isAdv && !p.ad);
+        
+        totalCount = places.length;
+        
+        for (let i = 0; i < places.length; i++) {
+          const place = places[i];
+          const placeId = String(place.id || place.placeId || '');
+          const targetId = String(targetMid);
+          
+          if (placeId === targetId) {
+            rank = i + 1;
+            console.log(`[RANK] 발견! 순위: ${rank}, name: ${place.name}`);
+            break;
+          }
         }
+        
+        if (!rank && places.length > 0) {
+          console.log(`[RANK] MID ${targetMid}를 찾지 못함`);
+          places.slice(0, 5).forEach((p, i) => {
+            console.log(`[RANK] ${i+1}위: id=${p.id}, name=${p.name}`);
+          });
+        }
+      } catch (e) {
+        console.log('[RANK] Apollo 파싱 실패:', e.message);
       }
-
-      if (!rank) {
-        console.log(`[RANK] MID ${targetMid}를 검색 결과에서 찾지 못함`);
-        places.slice(0, 3).forEach((p, i) => {
-          console.log(`[RANK] ${i+1}위: id=${p.id || p.placeId || p.sid}, name=${p.name}`);
-        });
+    }
+    
+    // Apollo 실패시 정규식으로 ID 추출 시도
+    if (rank === null) {
+      const idMatches = html.matchAll(/place\/(\d+)/g);
+      const foundIds = [...new Set([...idMatches].map(m => m[1]))];
+      
+      console.log(`[RANK] 정규식으로 ${foundIds.length}개 ID 발견`);
+      
+      const targetId = String(targetMid);
+      const idx = foundIds.indexOf(targetId);
+      
+      if (idx !== -1) {
+        rank = idx + 1;
+        console.log(`[RANK] 정규식 매칭 성공! 순위: ${rank}`);
+      } else {
+        console.log(`[RANK] 처음 5개 ID:`, foundIds.slice(0, 5));
       }
-    } else {
-      console.log('[RANK] places 배열을 찾지 못함');
+      
+      totalCount = foundIds.length;
     }
 
     return {
