@@ -160,22 +160,29 @@ export async function fetchPlaceRank(keyword, targetMid) {
     let rank = null;
     let totalCount = 0;
 
-    // 검색 결과에서 place 리스트 찾기
-    const placeResult = data?.result?.place;
-    if (placeResult && placeResult.list) {
-      const places = placeResult.list;
+    // 검색 결과에서 place 리스트 찾기 (여러 경로 시도)
+    let places = null;
+    if (data?.result?.place?.list) {
+      places = data.result.place.list;
+    } else if (data?.place?.list) {
+      places = data.place.list;
+    } else if (Array.isArray(data?.place)) {
+      places = data.place;
+    }
+
+    if (places && places.length > 0) {
       totalCount = places.length;
       console.log(`[RANK] 검색 결과 ${totalCount}개 발견`);
 
       for (let i = 0; i < places.length; i++) {
         const place = places[i];
-        const placeId = String(place.id || place.placeId || '');
+        const placeId = String(place.id || place.placeId || place.sid || '');
         const targetId = String(targetMid);
         
-        // ID 비교 (앞자리 일치도 체크)
-        if (placeId === targetId || placeId.includes(targetId) || targetId.includes(placeId)) {
+        // ID 비교
+        if (placeId === targetId) {
           rank = i + 1;
-          console.log(`[RANK] 발견! 순위: ${rank}, placeId: ${placeId}`);
+          console.log(`[RANK] 발견! 순위: ${rank}, placeId: ${placeId}, name: ${place.name}`);
           break;
         }
       }
@@ -184,12 +191,15 @@ export async function fetchPlaceRank(keyword, targetMid) {
         console.log(`[RANK] MID ${targetMid}를 검색 결과에서 찾지 못함`);
         // 디버깅: 처음 5개 결과 로그
         places.slice(0, 5).forEach((p, i) => {
-          console.log(`[RANK] ${i+1}위: id=${p.id}, name=${p.name}`);
+          console.log(`[RANK] ${i+1}위: id=${p.id || p.placeId || p.sid}, name=${p.name}`);
         });
       }
     } else {
       console.log('[RANK] 검색 결과 없음 또는 다른 형식');
-      console.log('[RANK] 응답 키:', Object.keys(data?.result || {}));
+      console.log('[RANK] 응답 키:', Object.keys(data || {}));
+      if (data?.place) {
+        console.log('[RANK] place 키 내용:', typeof data.place, Array.isArray(data.place) ? 'array' : Object.keys(data.place));
+      }
     }
 
     return {
