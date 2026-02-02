@@ -141,86 +141,55 @@ export async function fetchPlaceRank(keyword, targetMid) {
   
   try {
     // 네이버 지도 검색 페이지
-    const searchUrl = `https://map.naver.com/p/search/${encodeURIComponent(keyword)}`;
+    const searchUrl = `https://m.map.naver.com/search2/search.naver?query=${encodeURIComponent(keyword)}&sm=hty&style=v5`;
     
     const agent = getRandomProxyAgent();
     const response = await axios.get(searchUrl, {
       httpsAgent: agent,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9',
       },
-      timeout: 15000,
+      timeout: 20000,
     });
 
     const html = response.data;
+    console.log(`[RANK] HTML 길이: ${html.length}자`);
+    console.log(`[RANK] HTML 샘플: ${html.substring(0, 300)}`);
+    
     let rank = null;
     let totalCount = 0;
 
-    // __APOLLO_STATE__ 에서 검색 결과 추출
-    const apolloMatch = html.match(/__APOLLO_STATE__\s*=\s*({.+?});?\s*<\/script>/s);
+    // 모바일 지도에서 place ID 추출 (data-id, sid 등)
+    const idPattern = /sid[=:][\s"']*(\d{8,})/gi;
+    const idPattern2 = /place\/(\d{8,})/gi;
+    const idPattern3 = /"id"\s*:\s*"?(\d{8,})"?/gi;
     
-    if (apolloMatch) {
-      try {
-        const apolloData = JSON.parse(apolloMatch[1]);
-        
-        // 검색 결과 place 찾기 (SearchList, PlaceSummary 등)
-        const placeKeys = Object.keys(apolloData).filter(k => 
-          k.startsWith('PlaceSummary:') || k.startsWith('Place:')
-        );
-        
-        console.log(`[RANK] Apollo에서 ${placeKeys.length}개 장소 발견`);
-        
-        // 광고 제외하고 순서대로 정렬
-        const places = placeKeys
-          .map(k => apolloData[k])
-          .filter(p => !p.isAd && !p.isAdv && !p.ad);
-        
-        totalCount = places.length;
-        
-        for (let i = 0; i < places.length; i++) {
-          const place = places[i];
-          const placeId = String(place.id || place.placeId || '');
-          const targetId = String(targetMid);
-          
-          if (placeId === targetId) {
-            rank = i + 1;
-            console.log(`[RANK] 발견! 순위: ${rank}, name: ${place.name}`);
-            break;
-          }
-        }
-        
-        if (!rank && places.length > 0) {
-          console.log(`[RANK] MID ${targetMid}를 찾지 못함`);
-          places.slice(0, 5).forEach((p, i) => {
-            console.log(`[RANK] ${i+1}위: id=${p.id}, name=${p.name}`);
-          });
-        }
-      } catch (e) {
-        console.log('[RANK] Apollo 파싱 실패:', e.message);
-      }
+    const allIds = [];
+    let match;
+    
+    while ((match = idPattern.exec(html)) !== null) allIds.push(match[1]);
+    while ((match = idPattern2.exec(html)) !== null) allIds.push(match[1]);
+    while ((match = idPattern3.exec(html)) !== null) allIds.push(match[1]);
+    
+    // 중복 제거하면서 순서 유지
+    const uniqueIds = [...new Set(allIds)];
+    
+    console.log(`[RANK] 발견된 ID 개수: ${uniqueIds.length}`);
+    console.log(`[RANK] 처음 10개 ID: ${uniqueIds.slice(0, 10).join(', ')}`);
+    
+    const targetId = String(targetMid);
+    const idx = uniqueIds.indexOf(targetId);
+    
+    if (idx !== -1) {
+      rank = idx + 1;
+      console.log(`[RANK] 매칭 성공! 순위: ${rank}`);
+    } else {
+      console.log(`[RANK] MID ${targetMid}를 찾지 못함`);
     }
     
-    // Apollo 실패시 정규식으로 ID 추출 시도
-    if (rank === null) {
-      const idMatches = html.matchAll(/place\/(\d+)/g);
-      const foundIds = [...new Set([...idMatches].map(m => m[1]))];
-      
-      console.log(`[RANK] 정규식으로 ${foundIds.length}개 ID 발견`);
-      
-      const targetId = String(targetMid);
-      const idx = foundIds.indexOf(targetId);
-      
-      if (idx !== -1) {
-        rank = idx + 1;
-        console.log(`[RANK] 정규식 매칭 성공! 순위: ${rank}`);
-      } else {
-        console.log(`[RANK] 처음 5개 ID:`, foundIds.slice(0, 5));
-      }
-      
-      totalCount = foundIds.length;
-    }
+    totalCount = uniqueIds.length;
 
     return {
       rank: rank,
