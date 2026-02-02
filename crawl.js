@@ -160,14 +160,29 @@ export async function fetchPlaceRank(keyword, targetMid) {
     let rank = null;
     let totalCount = 0;
 
+    // 디버깅: 응답 구조 확인
+    console.log('[RANK] 응답 키:', Object.keys(data || {}));
+    if (data?.result) {
+      console.log('[RANK] result 키:', Object.keys(data.result));
+      if (data.result?.place) {
+        console.log('[RANK] result.place 키:', Object.keys(data.result.place));
+      }
+    }
+
     // 검색 결과에서 place 리스트 찾기 (여러 경로 시도)
     let places = null;
     if (data?.result?.place?.list) {
       places = data.result.place.list;
+      console.log('[RANK] 경로: result.place.list');
+    } else if (data?.result?.list) {
+      places = data.result.list;
+      console.log('[RANK] 경로: result.list');
     } else if (data?.place?.list) {
       places = data.place.list;
-    } else if (Array.isArray(data?.place)) {
-      places = data.place;
+      console.log('[RANK] 경로: place.list');
+    } else if (Array.isArray(data?.result?.place)) {
+      places = data.result.place;
+      console.log('[RANK] 경로: result.place (array)');
     }
 
     if (places && places.length > 0) {
@@ -189,17 +204,13 @@ export async function fetchPlaceRank(keyword, targetMid) {
 
       if (!rank) {
         console.log(`[RANK] MID ${targetMid}를 검색 결과에서 찾지 못함`);
-        // 디버깅: 처음 5개 결과 로그
-        places.slice(0, 5).forEach((p, i) => {
+        // 디버깅: 처음 3개 결과 로그
+        places.slice(0, 3).forEach((p, i) => {
           console.log(`[RANK] ${i+1}위: id=${p.id || p.placeId || p.sid}, name=${p.name}`);
         });
       }
     } else {
-      console.log('[RANK] 검색 결과 없음 또는 다른 형식');
-      console.log('[RANK] 응답 키:', Object.keys(data || {}));
-      if (data?.place) {
-        console.log('[RANK] place 키 내용:', typeof data.place, Array.isArray(data.place) ? 'array' : Object.keys(data.place));
-      }
+      console.log('[RANK] places 배열을 찾지 못함');
     }
 
     return {
