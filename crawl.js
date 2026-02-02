@@ -160,12 +160,12 @@ export async function fetchPlaceRank(keyword, targetMid) {
     let rank = null;
     let totalCount = 0;
 
-    // 디버깅: 응답 구조 확인
-    console.log('[RANK] 응답 키:', Object.keys(data || {}));
-    if (data?.result) {
-      console.log('[RANK] result 키:', Object.keys(data.result));
-      if (data.result?.place) {
-        console.log('[RANK] result.place 키:', Object.keys(data.result.place));
+    // 디버깅: result.place 구조 확인
+    if (data?.result?.place) {
+      const placeData = data.result.place;
+      console.log('[RANK] result.place 타입:', typeof placeData, Array.isArray(placeData) ? '(배열)' : '');
+      if (typeof placeData === 'object' && !Array.isArray(placeData)) {
+        console.log('[RANK] result.place 키:', Object.keys(placeData));
       }
     }
 
@@ -174,15 +174,15 @@ export async function fetchPlaceRank(keyword, targetMid) {
     if (data?.result?.place?.list) {
       places = data.result.place.list;
       console.log('[RANK] 경로: result.place.list');
-    } else if (data?.result?.list) {
-      places = data.result.list;
-      console.log('[RANK] 경로: result.list');
-    } else if (data?.place?.list) {
-      places = data.place.list;
-      console.log('[RANK] 경로: place.list');
     } else if (Array.isArray(data?.result?.place)) {
       places = data.result.place;
       console.log('[RANK] 경로: result.place (array)');
+    } else if (data?.result?.place?.items) {
+      places = data.result.place.items;
+      console.log('[RANK] 경로: result.place.items');
+    } else if (data?.result?.place?.data) {
+      places = data.result.place.data;
+      console.log('[RANK] 경로: result.place.data');
     }
 
     if (places && places.length > 0) {
@@ -194,7 +194,6 @@ export async function fetchPlaceRank(keyword, targetMid) {
         const placeId = String(place.id || place.placeId || place.sid || '');
         const targetId = String(targetMid);
         
-        // ID 비교
         if (placeId === targetId) {
           rank = i + 1;
           console.log(`[RANK] 발견! 순위: ${rank}, placeId: ${placeId}, name: ${place.name}`);
@@ -204,7 +203,6 @@ export async function fetchPlaceRank(keyword, targetMid) {
 
       if (!rank) {
         console.log(`[RANK] MID ${targetMid}를 검색 결과에서 찾지 못함`);
-        // 디버깅: 처음 3개 결과 로그
         places.slice(0, 3).forEach((p, i) => {
           console.log(`[RANK] ${i+1}위: id=${p.id || p.placeId || p.sid}, name=${p.name}`);
         });
